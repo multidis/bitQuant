@@ -11,35 +11,54 @@ class api(object):
         self.job = {}
 
     #|Add GET request job and set parameters for job
-    def add_job(self, exchange, symbol, limit='',
+    def add_job(self, exchange, symbol, type, limit='',
                     since='', auto_since='no',ping_limit=1.0):
-        job = {'exchange':exchange, 'symbol':symbol,
+
+        #|Create 'job' dictionary
+        job = {'exchange':exchange, 'symbol':symbol, 'type':type,
                     'limit':limit, 'market':'',
                     'since':since, 'auto_since':auto_since,
                     'ping_limit':ping_limit, 'next':0}
-        stmt = rest.build_stmt(job)
-        job['stmt'] = stmt
+
+        #|Build statement for REST API request
+        job['stmt'] = rest.build_stmt(job)
+
+        #|Create nested dictionary if not present for exchange/symbol/type combo
         if not exchange in self.jobs.keys():
             self.jobs[exchange] = {}
-        self.jobs[exchange][symbol] = job
+        if not symbol in self.jobs[exchange].keys():
+            self.jobs[exchange][symbol] = {}
+        if not type in self.jobs[exchange][symbol].keys():
+            self.jobs[exchange][symbol][type] = {}
+
+        #|Add job to 'jobs' dictionary
+        self.jobs[exchange][symbol][type] = job
 
     #|Run GET request job and return trade history DataFrame
-    def run(self, exchange, symbol):
-        self.load_job(exchange, symbol)
-        self.limiter()
-        trd, self.job = rest.get(self.job)
-        if self.job['auto_since'] == 'yes' \
-                    and len(trd.index) > 0:
-            self.auto_since(trd)
-            self.job['stmt'] = rest.build_stmt(self.job)
-        return trd
+    def run(self, exchange, symbol, type):
 
-    #|Update 'job' dictionary for previous job and load current 'job'
-    def load_job(self, exchange, symbol):
+        #|Load job and run "limiter" function to pause in order not to exceed jobs per second rate
+        self.load_job(exchange, symbol, type)
+        self.limiter()
+
+        #|Send GET API request and return DataFrame and updated 'job' dictionary
+        df, self.job = rest.get(self.job)
+
+        #|Run trade history jobs
+        if self.job['type'] == 'trades':
+            if self.job['auto_since'] == 'yes' \
+                        and len(df.index) > 0:
+                self.auto_since(df)
+                self.job['stmt'] = rest.build_stmt(self.job)
+
+        return df
+
+    #|Update 'jobs' dictionary for previous job and load current 'job'
+    def load_job(self, exchange, symbol, type):
         if not len(self.job) == 0:
-            self.jobs[self.job['exchange']][self.job['symbol']] \
+            self.jobs[self.job['exchange']][self.job['symbol']][self.job['type']] \
                         = self.job
-        self.job = self.jobs[exchange][symbol]
+        self.job = self.jobs[exchange][symbol][type]
 
     #|Limit number of requests per sec
     def limiter(self):
@@ -54,3 +73,4 @@ class api(object):
                 self.job['since'] = int(trd['tid'].max())
             if cmd['stype'] == 'timestamp':
                 self.job['since'] = int(trd['timestamp'].max()) - 1
+
